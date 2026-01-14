@@ -16,7 +16,6 @@
     @media (max-width: 950px){ .grid{ grid-template-columns: 1fr; } }
     .card { background: var(--card); border: 1px solid rgba(255,255,255,0.08); border-radius: 16px; padding: 12px; box-shadow: 0 12px 30px rgba(0,0,0,0.28); }
     .row { display:flex; gap: 10px; align-items:center; flex-wrap: wrap; }
-    .row > * { flex: none; }
     .btn { cursor: pointer; border: 1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.06); color: var(--text); padding: 10px 12px; border-radius: 12px; font-weight: 650; }
     .btn:hover { background: rgba(255,255,255,0.10); }
     .btn.primary { background: rgba(125,211,252,0.20); border-color: rgba(125,211,252,0.45); }
@@ -93,7 +92,8 @@
         <ul>
           <li>Needs a <b>secure context</b> (HTTPS or localhost). If you just double-click the file, BLE won’t work.</li>
           <li>Scanning advertisements via web is supported mainly on <b>Android Chrome</b>. Desktop support depends on OS/browser.</li>
-          <li>On iPhone (Safari) Web Bluetooth is not supported; use a Web-BLE browser app (example: Bluefy) or use the manual “Paste hex” mode.</li>
+          <li>On iPhone (Safari) Web Bluetooth is not supported; use a Web-BLE browser app or use the manual “Paste hex” mode.</li>
+          <li><b>Endian note (fixed):</b> Surface + Globe fields are parsed as <b>big-endian</b> (MSB first). Air tag remains little-endian (as per TI payload).</li>
         </ul>
       </div>
 
@@ -157,7 +157,7 @@
       <div class="split" style="margin-top: 12px;">
         <div>
           <label class="mono">Manual decode (paste full ADV hex)</label>
-          <textarea id="hexInput" placeholder="Example: 0x09095459503130303039020104031A200009FF0D0001F909731E64"></textarea>
+          <textarea id="hexInput" placeholder="Example: 0x0B09534752492D53542D303108FF0505610BC400FC"></textarea>
           <div class="row" style="margin-top:8px;">
             <button id="btnDecode" class="btn">Decode hex</button>
             <button id="btnUseDecoded" class="btn primary" disabled>Use decoded as selected</button>
@@ -183,17 +183,16 @@
 <script>
 /**
  * BLE Sensor Calibration Tool (single-file)
- * - Web Bluetooth Scanning API (navigator.bluetooth.requestLEScan)
- * - Decoders:
- *   AIR tag (TI company id 0x000D): version, temp x100, RH x100, batt %
- *   Surface tag (company id 0x0505): battRaw/32 V, chipC x100, surfC x10
- *   Globe kit (Espressif company id 0x02E5): ver, bits, TMP x100, TC x100, CJ x100, FS m/s x100, FS counts
+ *
+ * Fix applied:
+ * - Surface tag + Globe kit tag are BIG-endian for 16-bit fields (MSB first).
+ *   Example: bytes 0A 5D => 0x0A5D => 26.53°C (NOT 0x5D0A).
+ * - Air tag remains little-endian as per TI payload.
  */
 
 // ---------- Utilities ----------
 const $ = (id) => document.getElementById(id);
 const nowIso = () => new Date().toISOString();
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
 function bytesToHex(bytes) {
   return Array.from(bytes, b => b.toString(16).padStart(2,'0')).join('');
@@ -209,7 +208,8 @@ function ascii(bytes) {
   try { return new TextDecoder('utf-8').decode(bytes); }
   catch { return Array.from(bytes).map(b => (b>=32 && b<=126)? String.fromCharCode(b): '.').join(''); }
 }
-function leU16(a, i) { return (a[i] | (a[i+1] << 8)) >>> 0; }
+function leU16(a, i) { return (a[i] | (a[i+1] << 8)) >>> 0; }      // LSB first
+function beU16(a, i) { return ((a[i] << 8) | a[i+1]) >>> 0; }     // MSB first
 function fmt(v, digits=2) {
   if (v === null || v === undefined || Number.isNaN(v)) return '—';
   return Number(v).toFixed(digits);
@@ -218,12 +218,16 @@ function isFiniteNumber(x) { return typeof x === 'number' && Number.isFinite(x);
 
 // ---------- Decoders ----------
 function decodeAirTag(companyId, dataBytes, name) {
+  // TI company id
   if (companyId !== 0x000D) return null;
   if (dataBytes.length < 6) return null;
+
+  // TI payload is little-endian for 16-bit values (per your decode)
   const ver = dataBytes[0];
   const tempRaw = leU16(dataBytes, 1);
   const rhRaw   = leU16(dataBytes, 3);
   const battPct = dataBytes[5];
+
   return {
     sensorType: 'AIR',
     label: name || 'AIR tag',
@@ -237,11 +241,16 @@ function decodeAirTag(companyId, dataBytes, name) {
 }
 
 function decodeSurfaceTag(companyId, dataBytes, name) {
+  // Your surface tag company id
   if (companyId !== 0x0505) return null;
   if (dataBytes.length < 5) return null;
+
+  // FIX: Surface tag fields are big-endian (MSB first)
+  // Example: 61 0B C4 00 FC => chip_raw=0x0BC4, surf_raw=0x00FC
   const battRaw = dataBytes[0];
-  const chipRaw = leU16(dataBytes, 1);
-  const surfRaw = leU16(dataBytes, 3);
+  const chipRaw = beU16(dataBytes, 1);
+  const surfRaw = beU16(dataBytes, 3);
+
   return {
     sensorType: 'SURFACE',
     label: name || 'Surface tag',
@@ -257,13 +266,16 @@ function decodeSurfaceTag(companyId, dataBytes, name) {
 function decodeGlobeKit(companyId, dataBytes, name) {
   if (companyId !== 0x02E5) return null;
   if (dataBytes.length < 12) return null;
+
   const ver = dataBytes[0];
   const bits = dataBytes[1];
-  const tmpRaw = leU16(dataBytes, 2);
-  const tcRaw  = leU16(dataBytes, 4);
-  const cjRaw  = leU16(dataBytes, 6);
-  const fsRaw  = leU16(dataBytes, 8);
-  const fsCounts = leU16(dataBytes, 10);
+
+  // FIX: Globe kit 16-bit fields are big-endian (as in your example: 0A D2 => 0x0AD2)
+  const tmpRaw = beU16(dataBytes, 2);
+  const tcRaw  = beU16(dataBytes, 4);
+  const cjRaw  = beU16(dataBytes, 6);
+  const fsRaw  = beU16(dataBytes, 8);
+  const fsCounts = beU16(dataBytes, 10);
 
   const tmpValid = (bits & 0x01) !== 0;
   const tcValid  = (bits & 0x02) !== 0;
@@ -271,6 +283,7 @@ function decodeGlobeKit(companyId, dataBytes, name) {
   const fsValid  = (bits & 0x08) !== 0;
 
   const cjC = (cjRaw === 0x7FFF) ? null : (cjRaw / 100.0);
+
   return {
     sensorType: 'GLOBE',
     label: name || 'Globe kit',
@@ -286,7 +299,6 @@ function decodeGlobeKit(companyId, dataBytes, name) {
 }
 
 function decodeByManufacturer(companyId, dataBytes, name) {
-  // Try known decoders
   return (
     decodeAirTag(companyId, dataBytes, name) ||
     decodeSurfaceTag(companyId, dataBytes, name) ||
@@ -310,7 +322,7 @@ function parseAdvHexTLV(hexStr) {
     i += (len - 1);
     if (type === 0x09) localName = ascii(value);
     if (type === 0xFF && value.length >= 2) {
-      const companyId = value[0] | (value[1] << 8);
+      const companyId = value[0] | (value[1] << 8); // company id itself is little-endian in AD structure
       const dataBytes = value.slice(2);
       mfg.push({ companyId, dataBytes });
     }
@@ -362,7 +374,6 @@ function buildFieldsOptions(sensorObj) {
   const options = [];
   for (const k of Object.keys(f)) {
     const v = f[k];
-    // Only numeric fields are calibratable
     if (isFiniteNumber(v)) options.push(k);
   }
   return options;
@@ -390,7 +401,6 @@ function renderDevices() {
   list.innerHTML = '';
   const filter = $('filterType').value;
 
-  // Sort by lastSeen desc
   const items = Array.from(sensors.entries()).sort((a,b) => (b[1].lastSeen||0) - (a[1].lastSeen||0));
 
   for (const [key, s] of items) {
@@ -556,7 +566,6 @@ function stopScan() {
 
 function onAdvertisement(event) {
   try {
-    // Manufacturer data
     const name = event?.device?.name || event?.name || '';
     const deviceId = event?.device?.id || name || ('DEV_' + Math.random().toString(16).slice(2));
     const rssi = (event?.rssi ?? null);
@@ -564,7 +573,6 @@ function onAdvertisement(event) {
     let decoded = null;
     let rawHex = null;
 
-    // manufacturerData is a Map<number, DataView>
     if (event.manufacturerData && event.manufacturerData.size) {
       for (const [companyId, dv] of event.manufacturerData.entries()) {
         const u8 = new Uint8Array(dv.buffer.slice(dv.byteOffset, dv.byteOffset + dv.byteLength));
@@ -574,7 +582,6 @@ function onAdvertisement(event) {
       }
     }
 
-    // Fallback: infer by name if manufacturer data isn't exposed (some platforms)
     if (!decoded && name) {
       decoded = { sensorType: 'UNKNOWN', label: name, fields: {}, meta: { raw_hex: rawHex || '' } };
     }
@@ -588,7 +595,6 @@ function onAdvertisement(event) {
       decoded: decoded || prev.decoded || null
     });
 
-    // Auto-select the first good decode we see
     if (!selectedKey && decoded) selectSensor(deviceId);
     renderDevices();
     if (selectedKey === deviceId) renderSelected();
@@ -618,7 +624,7 @@ function addPoint() {
   if (!Number.isFinite(refVal)) { alert('Please enter a valid reference value (number).'); return; }
   if (measuredVal === 0) { alert('Measured value is 0; cannot compute ratios.'); return; }
 
-  const factor = refVal / measuredVal; // multiply DUT by this factor to match reference
+  const factor = refVal / measuredVal;
   const ratio = measuredVal / refVal;
 
   const p = {
@@ -725,7 +731,6 @@ $('btnDecode').addEventListener('click', decodeHex);
 $('btnUseDecoded').addEventListener('click', useDecoded);
 $('filterType').addEventListener('change', renderDevices);
 
-// Enable/disable Add button based on inputs
 $('refValue').addEventListener('input', () => {
   const s = sensors.get(selectedKey);
   const ok = !!s?.decoded && $('fieldSelect').value && ($('refValue').value.trim().length > 0);
