@@ -1,0 +1,746 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BLE Sensor Calibration (Advertise Decode)</title>
+  <style>
+    :root { --bg:#0b0d12; --card:#121626; --muted:#8ea0b7; --text:#e8eef7; --accent:#7dd3fc; --good:#34d399; --warn:#fbbf24; --bad:#fb7185; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background: var(--bg); color: var(--text); }
+    header { padding: 14px 16px; position: sticky; top:0; background: rgba(11,13,18,0.92); backdrop-filter: blur(8px); border-bottom: 1px solid rgba(255,255,255,0.08); z-index:10;}
+    header .title { font-weight: 700; letter-spacing: 0.2px; }
+    header .sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+    main { padding: 14px 16px 28px; max-width: 1100px; margin: 0 auto; }
+    .grid { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 12px; }
+    @media (max-width: 950px){ .grid{ grid-template-columns: 1fr; } }
+    .card { background: var(--card); border: 1px solid rgba(255,255,255,0.08); border-radius: 16px; padding: 12px; box-shadow: 0 12px 30px rgba(0,0,0,0.28); }
+    .row { display:flex; gap: 10px; align-items:center; flex-wrap: wrap; }
+    .row > * { flex: none; }
+    .btn { cursor: pointer; border: 1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.06); color: var(--text); padding: 10px 12px; border-radius: 12px; font-weight: 650; }
+    .btn:hover { background: rgba(255,255,255,0.10); }
+    .btn.primary { background: rgba(125,211,252,0.20); border-color: rgba(125,211,252,0.45); }
+    .btn.primary:hover { background: rgba(125,211,252,0.27); }
+    .btn.danger { background: rgba(251,113,133,0.18); border-color: rgba(251,113,133,0.45); }
+    .btn.danger:hover { background: rgba(251,113,133,0.26); }
+    .pill { font-size: 12px; padding: 6px 10px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.16); color: var(--muted); }
+    .pill.good { border-color: rgba(52,211,153,0.55); color: var(--good); }
+    .pill.warn { border-color: rgba(251,191,36,0.55); color: var(--warn); }
+    .pill.bad  { border-color: rgba(251,113,133,0.55); color: var(--bad); }
+    .muted { color: var(--muted); }
+    .small { font-size: 12px; }
+    label { font-size: 12px; color: var(--muted); display:block; margin-bottom: 6px; }
+    input, select, textarea {
+      width: 100%; padding: 10px 10px; border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.14);
+      background: rgba(255,255,255,0.04); color: var(--text);
+      outline: none;
+    }
+    textarea{ min-height: 88px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+    input:focus, select:focus, textarea:focus { border-color: rgba(125,211,252,0.60); box-shadow: 0 0 0 3px rgba(125,211,252,0.10); }
+    .devices { display: grid; grid-template-columns: 1fr; gap: 10px; margin-top: 10px; }
+    .device { padding: 10px; border-radius: 14px; border: 1px solid rgba(255,255,255,0.10); background: rgba(255,255,255,0.03); cursor: pointer; }
+    .device:hover { background: rgba(255,255,255,0.06); }
+    .device.selected { border-color: rgba(125,211,252,0.50); box-shadow: 0 0 0 3px rgba(125,211,252,0.10); }
+    .devTop { display:flex; justify-content: space-between; gap:10px; align-items:flex-start; }
+    .devName { font-weight: 750; }
+    .kv { display:grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; margin-top: 8px;}
+    .kv div { font-size: 13px; color: var(--muted); }
+    .kv b { color: var(--text); font-weight: 700; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+    .tableWrap{ overflow-x:auto; border-radius: 14px; border:1px solid rgba(255,255,255,0.10); margin-top: 10px; }
+    table { width: 100%; border-collapse: collapse; min-width: 840px; }
+    th, td { padding: 10px 10px; border-bottom: 1px solid rgba(255,255,255,0.08); text-align: left; font-size: 13px; }
+    th { color: var(--muted); font-weight: 700; background: rgba(255,255,255,0.03); position: sticky; top:0; }
+    tr:hover td { background: rgba(255,255,255,0.03); }
+    .right { text-align:right; }
+    .split { display:grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    @media (max-width: 700px){ .split{ grid-template-columns: 1fr; } }
+    .note { padding: 10px 12px; border-radius: 14px; border: 1px solid rgba(255,255,255,0.10); background: rgba(255,255,255,0.03); }
+    .note ul { margin: 8px 0 0 18px; }
+    .foot { margin-top: 10px; color: var(--muted); font-size: 12px; }
+    .badge { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.14); color: var(--muted);}
+  </style>
+</head>
+<body>
+<header>
+  <div class="title">BLE Sensor Calibration Tool</div>
+  <div class="sub">Reads BLE advertisements (TYP100xx / SGRI-ST-xx / SG-GK-xx), decodes values live, and exports calibration CSV.</div>
+</header>
+
+<main>
+  <div class="grid">
+    <section class="card">
+      <div class="row" style="justify-content: space-between;">
+        <div class="row">
+          <button id="btnStart" class="btn primary">Start scan</button>
+          <button id="btnStop" class="btn" disabled>Stop</button>
+          <span id="pillStatus" class="pill warn">Not scanning</span>
+          <span id="pillCompat" class="pill">Checking…</span>
+        </div>
+        <div class="row">
+          <select id="filterType" title="Filter by sensor type">
+            <option value="ALL">All sensor types</option>
+            <option value="AIR">AIR temp tag (TYP100xx)</option>
+            <option value="SURFACE">Surface temp tag (SGRI-ST-xx)</option>
+            <option value="GLOBE">Globe kit (SG-GK-xx)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="note small" style="margin-top:10px;">
+        <div><b>Quick notes (important):</b></div>
+        <ul>
+          <li>Needs a <b>secure context</b> (HTTPS or localhost). If you just double-click the file, BLE won’t work.</li>
+          <li>Scanning advertisements via web is supported mainly on <b>Android Chrome</b>. Desktop support depends on OS/browser.</li>
+          <li>On iPhone (Safari) Web Bluetooth is not supported; use a Web-BLE browser app (example: Bluefy) or use the manual “Paste hex” mode.</li>
+        </ul>
+      </div>
+
+      <div class="devices" id="deviceList"></div>
+
+      <div class="foot">
+        Tip: If you only have raw hex strings (from another scanner), use the <b>Manual decode</b> panel on the right.
+      </div>
+    </section>
+
+    <aside class="card">
+      <div class="split">
+        <div>
+          <label>Selected sensor</label>
+          <div id="selectedSummary" class="note small">No sensor selected.</div>
+        </div>
+
+        <div>
+          <label>Calibrate which field?</label>
+          <select id="fieldSelect" disabled>
+            <option value="">Select a sensor first…</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="split" style="margin-top:10px;">
+        <div>
+          <label>Reference value (master)</label>
+          <input id="refValue" inputmode="decimal" placeholder="e.g., 25.00" />
+        </div>
+        <div>
+          <label>Unit / note</label>
+          <input id="refUnit" placeholder="e.g., °C  (optional)" />
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:10px;">
+        <button id="btnAddPoint" class="btn primary" disabled>Add calibration point</button>
+        <button id="btnClearPoints" class="btn danger">Clear points</button>
+        <button id="btnDownload" class="btn">Download CSV</button>
+      </div>
+
+      <div class="tableWrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Sensor</th>
+              <th>Field</th>
+              <th class="right">Measured (DUT)</th>
+              <th class="right">Reference</th>
+              <th class="right">Factor (Ref/DUT)</th>
+              <th class="right">Ratio (DUT/Ref)</th>
+              <th>Note</th>
+            </tr>
+          </thead>
+          <tbody id="pointsBody"></tbody>
+        </table>
+      </div>
+
+      <div class="split" style="margin-top: 12px;">
+        <div>
+          <label class="mono">Manual decode (paste full ADV hex)</label>
+          <textarea id="hexInput" placeholder="Example: 0x09095459503130303039020104031A200009FF0D0001F909731E64"></textarea>
+          <div class="row" style="margin-top:8px;">
+            <button id="btnDecode" class="btn">Decode hex</button>
+            <button id="btnUseDecoded" class="btn primary" disabled>Use decoded as selected</button>
+          </div>
+          <div id="decodeOut" class="note small" style="margin-top:8px; min-height: 68px;">Paste a hex string and tap Decode.</div>
+        </div>
+        <div>
+          <label>Export / storage</label>
+          <div class="note small">
+            <div><b>Saved locally</b>: calibration points are kept in your browser (localStorage).</div>
+            <div style="margin-top:6px;">If you want a different CSV format for your sensor firmware import, tell me the exact columns you need.</div>
+          </div>
+          <div class="note small" style="margin-top:10px;">
+            <div><b>How to host (quick)</b>:</div>
+            <div class="muted">Put this file on any HTTPS site (GitHub Pages/Netlify/internal server), then open the URL on your phone.</div>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<script>
+/**
+ * BLE Sensor Calibration Tool (single-file)
+ * - Web Bluetooth Scanning API (navigator.bluetooth.requestLEScan)
+ * - Decoders:
+ *   AIR tag (TI company id 0x000D): version, temp x100, RH x100, batt %
+ *   Surface tag (company id 0x0505): battRaw/32 V, chipC x100, surfC x10
+ *   Globe kit (Espressif company id 0x02E5): ver, bits, TMP x100, TC x100, CJ x100, FS m/s x100, FS counts
+ */
+
+// ---------- Utilities ----------
+const $ = (id) => document.getElementById(id);
+const nowIso = () => new Date().toISOString();
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+function bytesToHex(bytes) {
+  return Array.from(bytes, b => b.toString(16).padStart(2,'0')).join('');
+}
+function hexToBytes(hexStr) {
+  const s = (hexStr || '').trim().toLowerCase().replace(/^0x/,'').replace(/[^0-9a-f]/g,'');
+  if (s.length % 2 !== 0) throw new Error('Hex length must be even.');
+  const out = new Uint8Array(s.length/2);
+  for (let i=0;i<s.length;i+=2) out[i/2] = parseInt(s.slice(i,i+2), 16);
+  return out;
+}
+function ascii(bytes) {
+  try { return new TextDecoder('utf-8').decode(bytes); }
+  catch { return Array.from(bytes).map(b => (b>=32 && b<=126)? String.fromCharCode(b): '.').join(''); }
+}
+function leU16(a, i) { return (a[i] | (a[i+1] << 8)) >>> 0; }
+function fmt(v, digits=2) {
+  if (v === null || v === undefined || Number.isNaN(v)) return '—';
+  return Number(v).toFixed(digits);
+}
+function isFiniteNumber(x) { return typeof x === 'number' && Number.isFinite(x); }
+
+// ---------- Decoders ----------
+function decodeAirTag(companyId, dataBytes, name) {
+  if (companyId !== 0x000D) return null;
+  if (dataBytes.length < 6) return null;
+  const ver = dataBytes[0];
+  const tempRaw = leU16(dataBytes, 1);
+  const rhRaw   = leU16(dataBytes, 3);
+  const battPct = dataBytes[5];
+  return {
+    sensorType: 'AIR',
+    label: name || 'AIR tag',
+    fields: {
+      temperature_c: tempRaw / 100.0,
+      humidity_rh: rhRaw / 100.0,
+      battery_pct: battPct
+    },
+    meta: { companyId, ver, raw_hex: bytesToHex(dataBytes) }
+  };
+}
+
+function decodeSurfaceTag(companyId, dataBytes, name) {
+  if (companyId !== 0x0505) return null;
+  if (dataBytes.length < 5) return null;
+  const battRaw = dataBytes[0];
+  const chipRaw = leU16(dataBytes, 1);
+  const surfRaw = leU16(dataBytes, 3);
+  return {
+    sensorType: 'SURFACE',
+    label: name || 'Surface tag',
+    fields: {
+      battery_v: battRaw / 32.0,
+      chip_c: chipRaw / 100.0,
+      surface_c: surfRaw / 10.0
+    },
+    meta: { companyId, raw_hex: bytesToHex(dataBytes) }
+  };
+}
+
+function decodeGlobeKit(companyId, dataBytes, name) {
+  if (companyId !== 0x02E5) return null;
+  if (dataBytes.length < 12) return null;
+  const ver = dataBytes[0];
+  const bits = dataBytes[1];
+  const tmpRaw = leU16(dataBytes, 2);
+  const tcRaw  = leU16(dataBytes, 4);
+  const cjRaw  = leU16(dataBytes, 6);
+  const fsRaw  = leU16(dataBytes, 8);
+  const fsCounts = leU16(dataBytes, 10);
+
+  const tmpValid = (bits & 0x01) !== 0;
+  const tcValid  = (bits & 0x02) !== 0;
+  const cjValid  = (bits & 0x04) !== 0;
+  const fsValid  = (bits & 0x08) !== 0;
+
+  const cjC = (cjRaw === 0x7FFF) ? null : (cjRaw / 100.0);
+  return {
+    sensorType: 'GLOBE',
+    label: name || 'Globe kit',
+    fields: {
+      tmp235_c: tmpValid ? tmpRaw / 100.0 : null,
+      thermocouple_c: tcValid ? tcRaw / 100.0 : null,
+      cold_junction_c: cjValid ? cjC : null,
+      air_velocity_ms: fsValid ? fsRaw / 100.0 : null,
+      fs3000_counts: fsCounts
+    },
+    meta: { companyId, ver, bits, raw_hex: bytesToHex(dataBytes) }
+  };
+}
+
+function decodeByManufacturer(companyId, dataBytes, name) {
+  // Try known decoders
+  return (
+    decodeAirTag(companyId, dataBytes, name) ||
+    decodeSurfaceTag(companyId, dataBytes, name) ||
+    decodeGlobeKit(companyId, dataBytes, name) ||
+    null
+  );
+}
+
+// Parse a full ADV hex string into {localName, mfgSections:[{companyId,dataBytes}]}
+function parseAdvHexTLV(hexStr) {
+  const bytes = hexToBytes(hexStr);
+  let i = 0;
+  let localName = '';
+  const mfg = [];
+  while (i < bytes.length) {
+    const len = bytes[i++];
+    if (!len) continue;
+    if (i + len - 1 > bytes.length) break;
+    const type = bytes[i++];
+    const value = bytes.slice(i, i + (len - 1));
+    i += (len - 1);
+    if (type === 0x09) localName = ascii(value);
+    if (type === 0xFF && value.length >= 2) {
+      const companyId = value[0] | (value[1] << 8);
+      const dataBytes = value.slice(2);
+      mfg.push({ companyId, dataBytes });
+    }
+  }
+  return { localName, mfg };
+}
+
+// ---------- State ----------
+let scan = null;
+let advListenerAdded = false;
+const sensors = new Map(); // key: deviceId or "MANUAL"
+let selectedKey = null;
+let manualDecoded = null;
+
+// Calibration points
+const LS_KEY = 'ble_cal_points_v1';
+let points = [];
+
+function loadPoints() {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    points = raw ? JSON.parse(raw) : [];
+  } catch { points = []; }
+  renderPoints();
+}
+function savePoints() { localStorage.setItem(LS_KEY, JSON.stringify(points)); }
+
+// ---------- UI helpers ----------
+function setStatus(text, kind) {
+  const pill = $('pillStatus');
+  pill.textContent = text;
+  pill.className = 'pill ' + (kind || 'warn');
+}
+function setCompat(text, kind) {
+  const pill = $('pillCompat');
+  pill.textContent = text;
+  pill.className = 'pill ' + (kind || '');
+}
+
+function sensorTypeLabel(t) {
+  if (t === 'AIR') return 'AIR (TYP100xx)';
+  if (t === 'SURFACE') return 'Surface (SGRI-ST-xx)';
+  if (t === 'GLOBE') return 'Globe (SG-GK-xx)';
+  return t || 'Unknown';
+}
+
+function buildFieldsOptions(sensorObj) {
+  const f = sensorObj.fields || {};
+  const options = [];
+  for (const k of Object.keys(f)) {
+    const v = f[k];
+    // Only numeric fields are calibratable
+    if (isFiniteNumber(v)) options.push(k);
+  }
+  return options;
+}
+
+function prettyField(field) {
+  const map = {
+    temperature_c: 'Temperature (°C)',
+    humidity_rh: 'Humidity (%RH)',
+    battery_pct: 'Battery (%)',
+    battery_v: 'Battery (V)',
+    chip_c: 'Chip temp (°C)',
+    surface_c: 'Surface temp (°C)',
+    tmp235_c: 'TMP235 (°C)',
+    thermocouple_c: 'Thermocouple (°C)',
+    cold_junction_c: 'Cold junction (°C)',
+    air_velocity_ms: 'Air velocity (m/s)',
+    fs3000_counts: 'FS3000 counts'
+  };
+  return map[field] || field;
+}
+
+function renderDevices() {
+  const list = $('deviceList');
+  list.innerHTML = '';
+  const filter = $('filterType').value;
+
+  // Sort by lastSeen desc
+  const items = Array.from(sensors.entries()).sort((a,b) => (b[1].lastSeen||0) - (a[1].lastSeen||0));
+
+  for (const [key, s] of items) {
+    if (filter !== 'ALL' && s.decoded?.sensorType !== filter) continue;
+
+    const div = document.createElement('div');
+    div.className = 'device' + (key === selectedKey ? ' selected' : '');
+    div.onclick = () => selectSensor(key);
+
+    const name = s.name || s.decoded?.label || 'Unknown';
+    const type = sensorTypeLabel(s.decoded?.sensorType);
+    const rssi = (s.rssi !== null && s.rssi !== undefined) ? `${s.rssi} dBm` : '—';
+    const ageSec = s.lastSeen ? Math.round((Date.now()-s.lastSeen)/1000) : null;
+
+    div.innerHTML = `
+      <div class="devTop">
+        <div>
+          <div class="devName">${escapeHtml(name)} <span class="badge">${escapeHtml(type)}</span></div>
+          <div class="small muted mono">${escapeHtml(key)}</div>
+        </div>
+        <div class="small muted">${escapeHtml(rssi)} • ${ageSec===null?'—':`${ageSec}s ago`}</div>
+      </div>
+      <div class="kv">${renderKV(s.decoded?.fields)}</div>
+    `;
+    list.appendChild(div);
+  }
+
+  if (!items.length) {
+    const empty = document.createElement('div');
+    empty.className = 'note small';
+    empty.innerHTML = `<b>No sensors yet.</b><div class="muted">Tap <b>Start scan</b>, then keep your phone close to the tags.</div>`;
+    list.appendChild(empty);
+  }
+}
+
+function renderKV(fields) {
+  if (!fields) return `<div class="muted">Waiting for data…</div>`;
+  const entries = Object.entries(fields);
+  if (!entries.length) return `<div class="muted">No fields</div>`;
+  let html = '';
+  for (const [k,v] of entries) {
+    let digits = 2;
+    if (k.includes('pct')) digits = 0;
+    if (k.includes('counts')) digits = 0;
+    html += `<div>${escapeHtml(prettyField(k))}</div><div class="right"><b>${escapeHtml(fmt(v, digits))}</b></div>`;
+  }
+  return html;
+}
+
+function renderSelected() {
+  const box = $('selectedSummary');
+  const fieldSel = $('fieldSelect');
+  const addBtn = $('btnAddPoint');
+
+  if (!selectedKey || !sensors.get(selectedKey)) {
+    box.textContent = 'No sensor selected.';
+    fieldSel.disabled = true;
+    fieldSel.innerHTML = `<option value="">Select a sensor first…</option>`;
+    addBtn.disabled = true;
+    return;
+  }
+
+  const s = sensors.get(selectedKey);
+  const d = s.decoded;
+  const name = s.name || d?.label || 'Unknown';
+  const type = sensorTypeLabel(d?.sensorType);
+  const rssi = (s.rssi !== null && s.rssi !== undefined) ? `${s.rssi} dBm` : '—';
+  const last = s.lastSeen ? new Date(s.lastSeen).toLocaleString() : '—';
+
+  box.innerHTML = `
+    <div><b>${escapeHtml(name)}</b> <span class="badge">${escapeHtml(type)}</span></div>
+    <div class="muted small mono">${escapeHtml(selectedKey)}</div>
+    <div class="muted small">RSSI: ${escapeHtml(rssi)} • Last seen: ${escapeHtml(last)}</div>
+    <div style="margin-top:8px;">${renderKV(d?.fields)}</div>
+    <div class="muted small" style="margin-top:8px;">MFG raw: <span class="mono">${escapeHtml(d?.meta?.raw_hex || '—')}</span></div>
+  `;
+
+  const opts = buildFieldsOptions(d || {});
+  fieldSel.disabled = opts.length === 0;
+  fieldSel.innerHTML = opts.length
+    ? opts.map(k => `<option value="${escapeHtml(k)}">${escapeHtml(prettyField(k))}</option>`).join('')
+    : `<option value="">No numeric fields</option>`;
+
+  addBtn.disabled = opts.length === 0;
+}
+
+function renderPoints() {
+  const tb = $('pointsBody');
+  tb.innerHTML = '';
+  for (const p of points) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="mono">${escapeHtml(p.time)}</td>
+      <td>${escapeHtml(p.sensorLabel)}</td>
+      <td>${escapeHtml(prettyField(p.field))}</td>
+      <td class="right mono">${escapeHtml(p.measured)}</td>
+      <td class="right mono">${escapeHtml(p.reference)}</td>
+      <td class="right mono">${escapeHtml(p.factor)}</td>
+      <td class="right mono">${escapeHtml(p.ratio)}</td>
+      <td class="muted">${escapeHtml(p.note || '')}</td>
+    `;
+    tb.appendChild(tr);
+  }
+  savePoints();
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// ---------- BLE scanning ----------
+function checkCompat() {
+  const hasBT = !!navigator.bluetooth;
+  const hasLEScan = hasBT && typeof navigator.bluetooth.requestLEScan === 'function';
+  const hasAdvEvt = hasBT && 'addEventListener' in navigator.bluetooth;
+
+  if (!hasBT) {
+    setCompat('No Web Bluetooth', 'bad');
+    return;
+  }
+  if (!hasLEScan) {
+    setCompat('No LE Scan API', 'warn');
+    return;
+  }
+  if (!hasAdvEvt) {
+    setCompat('No adv events', 'warn');
+    return;
+  }
+  setCompat('Web BLE Scan OK', 'good');
+}
+
+async function startScan() {
+  if (!navigator.bluetooth || typeof navigator.bluetooth.requestLEScan !== 'function') {
+    alert('This browser does not support BLE advertisement scanning (requestLEScan). Try Android Chrome, or use Manual decode.');
+    return;
+  }
+  try {
+    if (!advListenerAdded) {
+      navigator.bluetooth.addEventListener('advertisementreceived', onAdvertisement);
+      advListenerAdded = true;
+    }
+    scan = await navigator.bluetooth.requestLEScan({
+      acceptAllAdvertisements: true,
+      keepRepeatedDevices: true
+    });
+    setStatus('Scanning…', 'good');
+    $('btnStart').disabled = true;
+    $('btnStop').disabled = false;
+  } catch (e) {
+    console.error(e);
+    alert('Scan failed: ' + (e?.message || e));
+    setStatus('Not scanning', 'warn');
+  }
+}
+
+function stopScan() {
+  try { scan?.stop?.(); } catch {}
+  scan = null;
+  setStatus('Not scanning', 'warn');
+  $('btnStart').disabled = false;
+  $('btnStop').disabled = true;
+}
+
+function onAdvertisement(event) {
+  try {
+    // Manufacturer data
+    const name = event?.device?.name || event?.name || '';
+    const deviceId = event?.device?.id || name || ('DEV_' + Math.random().toString(16).slice(2));
+    const rssi = (event?.rssi ?? null);
+
+    let decoded = null;
+    let rawHex = null;
+
+    // manufacturerData is a Map<number, DataView>
+    if (event.manufacturerData && event.manufacturerData.size) {
+      for (const [companyId, dv] of event.manufacturerData.entries()) {
+        const u8 = new Uint8Array(dv.buffer.slice(dv.byteOffset, dv.byteOffset + dv.byteLength));
+        rawHex = bytesToHex(u8);
+        const d = decodeByManufacturer(companyId, u8, name);
+        if (d) { decoded = d; break; }
+      }
+    }
+
+    // Fallback: infer by name if manufacturer data isn't exposed (some platforms)
+    if (!decoded && name) {
+      decoded = { sensorType: 'UNKNOWN', label: name, fields: {}, meta: { raw_hex: rawHex || '' } };
+    }
+
+    const prev = sensors.get(deviceId) || {};
+    sensors.set(deviceId, {
+      ...prev,
+      name,
+      rssi,
+      lastSeen: Date.now(),
+      decoded: decoded || prev.decoded || null
+    });
+
+    // Auto-select the first good decode we see
+    if (!selectedKey && decoded) selectSensor(deviceId);
+    renderDevices();
+    if (selectedKey === deviceId) renderSelected();
+  } catch (e) {
+    console.warn('adv parse error', e);
+  }
+}
+
+function selectSensor(key) {
+  selectedKey = key;
+  renderDevices();
+  renderSelected();
+}
+
+// ---------- Calibration actions ----------
+function addPoint() {
+  const s = sensors.get(selectedKey);
+  if (!s || !s.decoded) return;
+
+  const field = $('fieldSelect').value;
+  const refStr = ($('refValue').value || '').trim();
+
+  const measuredVal = s.decoded.fields?.[field];
+  const refVal = Number(refStr);
+
+  if (!isFiniteNumber(measuredVal)) { alert('Selected field has no numeric value yet.'); return; }
+  if (!Number.isFinite(refVal)) { alert('Please enter a valid reference value (number).'); return; }
+  if (measuredVal === 0) { alert('Measured value is 0; cannot compute ratios.'); return; }
+
+  const factor = refVal / measuredVal; // multiply DUT by this factor to match reference
+  const ratio = measuredVal / refVal;
+
+  const p = {
+    time: nowIso(),
+    sensorType: s.decoded.sensorType,
+    sensorLabel: `${s.name || s.decoded.label || 'Sensor'}`,
+    deviceId: selectedKey,
+    field,
+    measured: String(measuredVal),
+    reference: String(refVal),
+    factor: String(factor),
+    ratio: String(ratio),
+    note: $('refUnit').value || ''
+  };
+  points.push(p);
+  renderPoints();
+}
+
+function clearPoints() {
+  if (!confirm('Clear all calibration points?')) return;
+  points = [];
+  renderPoints();
+}
+
+function downloadCSV() {
+  const header = [
+    'time','sensorType','deviceId','sensorLabel','field',
+    'measured','reference','factor_ref_over_measured','ratio_measured_over_ref','note'
+  ];
+  const rows = [header.join(',')];
+
+  for (const p of points) {
+    const row = [
+      p.time, p.sensorType, p.deviceId, p.sensorLabel, p.field,
+      p.measured, p.reference, p.factor, p.ratio, p.note || ''
+    ].map(csvEscape).join(',');
+    rows.push(row);
+  }
+
+  const csv = rows.join('\n');
+  const blob = new Blob([csv], {type:'text/csv;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'calibration_data.csv';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+function csvEscape(v) {
+  const s = String(v ?? '');
+  if (/[",\n]/.test(s)) return '"' + s.replace(/"/g,'""') + '"';
+  return s;
+}
+
+// ---------- Manual decode ----------
+function decodeHex() {
+  const input = $('hexInput').value.trim();
+  if (!input) { alert('Paste a hex string first.'); return; }
+  try {
+    const parsed = parseAdvHexTLV(input);
+    const name = parsed.localName || '(no name)';
+    let best = null;
+    for (const m of parsed.mfg) {
+      const d = decodeByManufacturer(m.companyId, m.dataBytes, name);
+      if (d) { best = d; break; }
+    }
+    if (!best) {
+      $('decodeOut').innerHTML = `<b>Decoded name:</b> ${escapeHtml(name)}<div class="muted">No known manufacturer decoder matched. Company IDs seen: ${escapeHtml(parsed.mfg.map(x=>'0x'+x.companyId.toString(16)).join(', ') || 'none')}</div>`;
+      manualDecoded = null;
+      $('btnUseDecoded').disabled = true;
+      return;
+    }
+    manualDecoded = { name, decoded: best, lastSeen: Date.now(), rssi: null };
+    $('decodeOut').innerHTML = `
+      <div><b>${escapeHtml(sensorTypeLabel(best.sensorType))}</b> • Name: <b>${escapeHtml(name)}</b></div>
+      <div style="margin-top:6px;">${renderKV(best.fields)}</div>
+      <div class="muted small" style="margin-top:8px;">Company: <span class="mono">0x${best.meta.companyId.toString(16).padStart(4,'0')}</span> • Raw: <span class="mono">${escapeHtml(best.meta.raw_hex)}</span></div>
+    `;
+    $('btnUseDecoded').disabled = false;
+  } catch (e) {
+    manualDecoded = null;
+    $('btnUseDecoded').disabled = true;
+    $('decodeOut').textContent = 'Decode error: ' + (e?.message || e);
+  }
+}
+
+function useDecoded() {
+  if (!manualDecoded?.decoded) return;
+  const key = 'MANUAL_' + (manualDecoded.decoded.label || 'SENSOR');
+  sensors.set(key, { ...manualDecoded });
+  selectSensor(key);
+  renderDevices();
+}
+
+// ---------- Wire up ----------
+$('btnStart').addEventListener('click', startScan);
+$('btnStop').addEventListener('click', stopScan);
+$('btnAddPoint').addEventListener('click', addPoint);
+$('btnClearPoints').addEventListener('click', clearPoints);
+$('btnDownload').addEventListener('click', downloadCSV);
+$('btnDecode').addEventListener('click', decodeHex);
+$('btnUseDecoded').addEventListener('click', useDecoded);
+$('filterType').addEventListener('change', renderDevices);
+
+// Enable/disable Add button based on inputs
+$('refValue').addEventListener('input', () => {
+  const s = sensors.get(selectedKey);
+  const ok = !!s?.decoded && $('fieldSelect').value && ($('refValue').value.trim().length > 0);
+  $('btnAddPoint').disabled = !ok;
+});
+$('fieldSelect').addEventListener('change', () => {
+  const s = sensors.get(selectedKey);
+  const ok = !!s?.decoded && $('fieldSelect').value && ($('refValue').value.trim().length > 0);
+  $('btnAddPoint').disabled = !ok;
+});
+
+checkCompat();
+loadPoints();
+renderDevices();
+renderSelected();
+</script>
+</body>
+</html>
